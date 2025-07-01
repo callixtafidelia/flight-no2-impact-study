@@ -1,0 +1,564 @@
+---
+title: "Assessing the Impact of Flight Activity on Urban NO₂ Pollution During The COVID-19 Pandemic in China"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+Install and load necessary packages:
+
+```{r}
+rm(list = ls())
+```
+
+```{r}
+library(readr)
+library(raster)
+library(dplyr)
+library(exactextractr)
+library(sf)
+library(ggplot2)
+library(fixest)
+library(stringr)
+```
+
+### Flight Trajectory
+
+```{r}
+# 2019
+jan2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20190101_20190131.csv.gz")
+feb2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20190201_20190228.csv.gz")
+mar2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20190301_20190331.csv.gz")
+apr2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20190401_20190430.csv.gz")
+may2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20190501_20190531.csv.gz")
+jun2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20190601_20190630.csv.gz")
+jul2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20190701_20190731.csv.gz")
+aug2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20190801_20190831.csv.gz")
+sep2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20190901_20190930.csv.gz")
+oct2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20191001_20191031.csv.gz")
+nov2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20191101_20191130.csv.gz")
+dec2019 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20191201_20191231.csv.gz")
+
+# 2020
+jan2020 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20200101_20200131.csv.gz")
+feb2020 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20200201_20200229.csv.gz")
+mar2020 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20200301_20200331.csv.gz")
+apr2020 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20200401_20200430.csv.gz")
+may2020 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20200501_20200531.csv.gz")
+jun2020 <- read_csv("D:/flight-no2-impact-study/dataset/flightlist/flightlist_20200601_20200630.csv.gz")
+```
+
+```{r}
+# List of all dataframes
+flights_list <- list(jan2019, feb2019, mar2019, apr2019, may2019, jun2019,
+                     jul2019, aug2019, sep2019, oct2019, nov2019, dec2019,
+                     jan2020, feb2020, mar2020, apr2020, may2020, jun2020)
+
+# List all China airports
+china_airports <- c("ZBAA", "ZBAD", "ZBLA", "ZBOW", "ZBTJ", "ZBHH", "ZBYN", "ZBSJ",
+                    "ZYHB", "ZYTL", "ZYTX", "ZYCC", "ZYQQ", "ZYJM", "ZYMD", "ZYAS",
+                    "ZSPD", "ZSSS", "ZSNJ", "ZSHC", "ZSQD", "ZSWZ", "ZSCN", "ZSFZ",
+                    "ZGGG", "ZGSZ", "ZGHA", "ZGBH", "ZJHK", "ZJSY", "ZGNN", "ZGHY",
+                    "ZUUU", "ZUCK", "ZPPP", "ZULS", "ZUGY", "ZUZY", "ZUMY", "ZUJZ",
+                    "ZLXY", "ZLLL", "ZLQY", "ZLIC", "ZLHZ", "ZLJN", "ZLXN", "ZLJQ",
+                    "ZWAK", "ZWAT", "ZWFY", "ZWKC", "ZWKL", "ZWKM", "ZWYN", "ZWNL")
+
+# Filter and bind all into one
+china_flights <- flights_list %>%
+  lapply(function(df) {
+    df %>% filter(origin %in% china_airports | destination %in% china_airports)
+  }) %>%
+  bind_rows()
+
+# Save it in the CSV file format 
+write_csv(china_flights, "D:/flight-no2-impact-study/dataset/china_flights_2019_2020.csv")
+```
+
+```{r}
+# Load the flight data for all China's airport from 2019 - 2020  
+china_flights <- read.csv("D:/flight-no2-impact-study/dataset/china_flights_2019_2020.csv")
+head(china_flights)
+```
+
+### NO2 Raster
+
+```{r}
+# Read all of the tif file 
+jan_des_2019rst <- raster("D:/flight-no2-impact-study/dataset/Mean_NO2_China_jan2019_des2019.tif")
+jan_feb_2020rst <- raster("D:/flight-no2-impact-study/dataset/Mean_NO2_China_jan2020_feb2020.tif")
+# jun_des_2020rst <- raster("D:/flight-no2-impact-study/dataset/Mean_NO2_China_june2020_des2020.tif")
+mar_may_2020rst <- raster("D:/flight-no2-impact-study/dataset/Mean_NO2_China_mar2020_may2020.tif")
+```
+
+### NO2 City Mean
+
+```{r}
+# Extract the mean 
+jan_des_2019city <- st_read("D:/flight-no2-impact-study/dataset/gadm41_CHN_2.json/gadm41_CHN_2.json")
+jan_des_2019city <- st_transform(jan_des_2019city, crs(jan_des_2019rst))
+jan_des_2019city$mean_NO2 <- exact_extract(jan_des_2019rst, jan_des_2019city, 'mean')
+
+jan_feb_2020city <- st_read("D:/flight-no2-impact-study/dataset/gadm41_CHN_2.json/gadm41_CHN_2.json")
+jan_feb_2020city <- st_transform(jan_feb_2020city, crs(jan_feb_2020rst))
+jan_feb_2020city$mean_NO2 <- exact_extract(jan_feb_2020rst, jan_feb_2020city, 'mean')
+
+jan_des_2020city <- st_read("D:/flight-no2-impact-study/dataset/gadm41_CHN_2.json/gadm41_CHN_2.json")
+jan_des_2020city <- st_transform(jan_des_2020city, crs(jun_des_2020rst))
+jan_des_2020city$mean_NO2 <- exact_extract(jun_des_2020rst, jan_des_2020city, 'mean')
+
+mar_may_2020city <- st_read("D:/flight-no2-impact-study/dataset/gadm41_CHN_2.json/gadm41_CHN_2.json")
+mar_may_2020city <- st_transform(mar_may_2020city, crs(mar_may_2020rst))
+mar_may_2020city$mean_NO2 <- exact_extract(mar_may_2020rst, mar_may_2020city, 'mean')
+
+# Check the results
+# head(jan_des_2019city[, c("NAME_1", "NAME_2", "mean_NO2")]) 
+# head(jan_feb_2020city[, c("NAME_1", "NAME_2", "mean_NO2")]) 
+# head(jan_des_2020city[, c("NAME_1", "NAME_2", "mean_NO2")]) 
+# head(mar_may_2020city[, c("NAME_1", "NAME_2", "mean_NO2")]) 
+```
+
+```{r, fig.height= 8}
+# Combine all values across rasters
+all_vals <- c(values(jan_des_2019rst), values(jan_feb_2020rst),
+              values(mar_may_2020rst), values(jun_des_2020rst))
+zlim_vals <- range(all_vals, na.rm = TRUE)
+
+# Define color palette again
+smooth_palette <- colorRampPalette(c("black", "blue", "purple", "cyan", "green", "yellow", "red"))(100)
+
+# Plot 2x2 with fixed color scale
+par(mfrow = c(2, 2), mar = c(4, 4, 4, 6))
+
+plot(jan_des_2019rst, col = smooth_palette, zlim = zlim_vals,
+     main = "NO2 (Jan–Dec 2019)", xlab = "Longitude", ylab = "Latitude")
+
+plot(jan_feb_2020rst, col = smooth_palette, zlim = zlim_vals,
+     main = "NO2 (Jan–Feb 2020)", xlab = "Longitude", ylab = "Latitude")
+
+plot(mar_may_2020rst, col = smooth_palette, zlim = zlim_vals,
+     main = "NO2 (Mar–May 2020)", xlab = "Longitude", ylab = "Latitude")
+
+plot(jun_des_2020rst, col = smooth_palette, zlim = zlim_vals,
+     main = "NO2 (Jun–Dec 2020)", xlab = "Longitude", ylab = "Latitude")
+```
+
+```{r,fig.height=8}
+# Add period labels to each city's dataset
+jan_des_2019city$Period <- "Jan–Dec 2019"
+jan_feb_2020city$Period <- "Jan–Feb 2020"
+mar_may_2020city$Period <- "Mar–May 2020"
+jan_des_2020city$Period <- "Jun–Dec 2020"
+
+# Combine into one dataframe
+china_all <- bind_rows(
+  jan_des_2019city,
+  jan_feb_2020city,
+  mar_may_2020city,
+  jan_des_2020city
+)
+
+# Get global min and max for fill scale
+global_min <- min(china_all$mean_NO2, na.rm = TRUE)
+global_max <- max(china_all$mean_NO2, na.rm = TRUE)
+
+# Plot using facet_wrap
+ggplot(china_all) +
+  geom_sf(aes(fill = mean_NO2), color = "white", size = 0.1) +
+  scale_fill_viridis_c(
+    option = "turbo",
+    na.value = "white",
+    limits = c(global_min, global_max),
+    name = "Mean NO2"
+  ) +
+  facet_wrap(~Period, ncol = 2) +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Mean NO2 by City in China (2019–2020)",
+    x = "Longitude",
+    y = "Latitude"
+  )
+```
+
+```{r}
+# Drop geometry and add phase label
+df_pre <- jan_des_2019city %>% st_drop_geometry() %>% mutate(phase = "pre_covid")
+df_early <- jan_feb_2020city %>% st_drop_geometry() %>% mutate(phase = "early_outbreak")
+df_disrupt <- mar_may_2020city %>% st_drop_geometry() %>% mutate(phase = "disruption")
+df_recover <- jan_des_2020city %>% st_drop_geometry() %>% mutate(phase = "recovery")
+
+# Combine all into one pollution panel
+pollution_panel <- bind_rows(df_pre, df_early, df_disrupt, df_recover)
+```
+
+```{r}
+china_flights_sf <- st_as_sf(china_flights, coords = c("longitude_1", "latitude_1"), crs = 4326)
+china_flights_sf <- st_transform(china_flights_sf, crs = st_crs(jan_des_2019city))
+
+# Fix invalid geometries
+jan_des_2019city <- st_make_valid(jan_des_2019city)
+
+# Now try the join again
+flights_with_city <- st_join(china_flights_sf, jan_des_2019city["NAME_2"])
+
+# Check if the NAME_2 exist 
+names(flights_with_city)
+```
+
+### Altitude
+
+```{r}
+china_flights_sf$day <- as.Date(china_flights_sf$day)
+china_flights_sf <- china_flights_sf %>%
+  mutate(phase = case_when(
+    day >= as.Date("2019-01-01") & day <= as.Date("2019-12-31") ~ "pre_covid",
+    day >= as.Date("2020-01-01") & day <= as.Date("2020-02-29") ~ "early_outbreak",
+    day >= as.Date("2020-03-01") & day <= as.Date("2020-05-31") ~ "disruption",
+    day >= as.Date("2020-06-01") & day <= as.Date("2020-12-31") ~ "recovery",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(phase))
+
+china_flights <- china_flights %>%
+  mutate(
+    avg_altitude = (altitude_1 + altitude_2) / 2
+  )
+```
+
+```{r}
+flights_with_city <- flights_with_city %>%
+  mutate(
+    day = as.Date(day),
+    phase = case_when(
+      day >= as.Date("2019-01-01") & day <= as.Date("2019-12-31") ~ "pre_covid",
+      day >= as.Date("2020-01-01") & day <= as.Date("2020-02-29") ~ "early_outbreak",
+      day >= as.Date("2020-03-01") & day <= as.Date("2020-05-31") ~ "disruption",
+      day >= as.Date("2020-06-01") & day <= as.Date("2020-12-31") ~ "recovery",
+      TRUE ~ NA_character_
+    )
+  )
+
+
+flight_summary <- flights_with_city %>%
+  st_drop_geometry() %>%
+  group_by(NAME_2, phase) %>%
+  summarise(
+    flight_count = n(),
+    avg_altitude = mean((altitude_1 + altitude_2) / 2, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r}
+final_panel <- left_join(pollution_panel, flight_summary, by = c("NAME_2", "phase"))
+```
+
+```{r}
+final_panel <- final_panel %>%
+  mutate(
+    flight_count = ifelse(is.na(flight_count), 0, flight_count)
+  ) %>%
+  filter(!is.na(mean_NO2))
+
+model <- feols(mean_NO2 ~ flight_count | NAME_2 + phase, data = final_panel)
+summary(model)
+```
+
+```{r}
+model <- feols(mean_NO2 ~ flight_count*phase | NAME_2, data = final_panel)
+summary(model)
+```
+
+```{r}
+final_panel <- final_panel %>%
+  mutate(
+    flight_count = ifelse(is.na(flight_count), 0, flight_count),
+    avg_altitude = ifelse(is.na(avg_altitude), 0, avg_altitude)
+  ) %>%
+  filter(!is.na(mean_NO2))
+
+model <- feols(mean_NO2 ~ flight_count + avg_altitude | NAME_2 + phase, data = final_panel)
+
+summary(model)
+```
+
+### Wind Speed
+
+```{r}
+# Define the file paths (Windows-style)
+files <- c(
+  "D:/flight-no2-impact-study/dataset/China_Wind_Phase_Phase0.csv",
+  "D:/flight-no2-impact-study/dataset/China_Wind_Phase_Phase1.csv",
+  "D:/flight-no2-impact-study/dataset/China_Wind_Phase_Phase2.csv",
+  "D:/flight-no2-impact-study/dataset/China_Wind_Phase_Phase3.csv"
+)
+
+# Read and combine all CSV files
+wind_data <- files %>%
+  lapply(read_csv) %>%
+  bind_rows()
+
+# Clean and compute wind speed
+wind_data_clean <- wind_data %>%
+  select(ADM2_NAME, mean_u10, mean_v10, phase) %>%  # adjust column names if needed
+  rename(NAME_2 = ADM2_NAME) %>%
+  mutate(
+    wind_speed = sqrt(mean_u10^2 + mean_v10^2),
+    phase = factor(phase, levels = c("Phase0", "Phase1", "Phase2", "Phase3"))
+  )
+
+readr::write_csv(wind_data_clean, "D:/flight-no2-impact-study/dataset/wind_data_clean.csv")
+```
+
+```{r}
+wind_data_clean <- read.csv("D:/flight-no2-impact-study/dataset/wind_data_clean.csv")
+wind_speed <- wind_data_clean
+wind_data_clean <- wind_data_clean %>%
+  mutate(
+    phase = recode(phase,
+      "Phase0" = "pre_covid",
+      "Phase1" = "early_outbreak",
+      "Phase2" = "disruption",
+      "Phase3" = "recovery"
+    )
+  )
+```
+
+```{r}
+wind_summary <- wind_data_clean %>%
+  group_by(NAME_2, phase) %>%
+  summarise(wind_speed = mean(wind_speed, na.rm = TRUE), .groups = "drop")
+
+final_panel <- left_join(final_panel, wind_summary, by = c("NAME_2", "phase"))
+```
+
+```{r}
+final_panel <- final_panel %>%
+  mutate(
+    flight_count = ifelse(is.na(flight_count), 0, flight_count),
+    avg_altitude = ifelse(is.na(avg_altitude), 0, avg_altitude),
+    wind_speed = ifelse(is.na(wind_speed), mean(wind_speed, na.rm = TRUE), wind_speed)
+  )
+
+model_with_wind <- feols(
+  mean_NO2 ~ flight_count*wind_speed + avg_altitude | NAME_2 + phase,
+  data = final_panel
+)
+
+summary(model_with_wind)
+```
+
+```{r}
+# Clean city names
+final_panel$NAME_2 <- trimws(final_panel$NAME_2)
+
+# Save pre-policy NO₂ predictions from original values
+final_panel_original <- final_panel
+final_panel_original$predicted_NO2 <- predict(model_with_wind)
+
+# Apply policy
+policy_sim <- final_panel %>%
+  mutate(
+    flight_count = flight_count * 0.75,
+    avg_altitude = avg_altitude + 5000
+  )
+
+# Predict under new policy
+policy_sim$predicted_NO2 <- predict(model_with_wind, newdata = policy_sim)
+
+# Calculate delta using original predictions
+policy_sim$delta_NO2 <- final_panel_original$predicted_NO2 - policy_sim$predicted_NO2
+
+# Summarize by city
+policy_summary <- policy_sim %>%
+  group_by(NAME_2) %>%
+  summarise(
+    avg_NO2_reduction = mean(delta_NO2, na.rm = TRUE)
+  ) %>%
+  arrange(desc(avg_NO2_reduction))
+
+policy_summary %>%
+  # 1. Pick the 10 largest negative (i.e. smallest numeric) values
+  slice_min(order_by = avg_NO2_reduction, n = 10) %>%
+  ggplot(aes(
+    # 2. Reorder so the largest negative difference is at the top
+    x = reorder(NAME_2, -avg_NO2_reduction), 
+    # 3. Flip the sign so bars are positive
+    y = -avg_NO2_reduction 
+  )) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Cities Benefiting from Flight Rerouting",
+    x = "City",
+    y = "Estimated NO2 Reduction (µmol/m2)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+
+# Step 1: Create origin and destination points (keep geometry only)
+origin_points <- china_flights %>%
+  filter(!is.na(longitude_1) & !is.na(latitude_1)) %>%
+  st_as_sf(coords = c("longitude_1", "latitude_1"), crs = 4326) %>%
+  select(geometry)
+
+destination_points <- china_flights %>%
+  filter(!is.na(longitude_2) & !is.na(latitude_2)) %>%
+  st_as_sf(coords = c("longitude_2", "latitude_2"), crs = 4326) %>%
+  select(geometry)
+
+# Step 2: Combine both
+china_flight_points <- rbind(origin_points, destination_points)
+
+# Step 3: Filter points within China’s approximate lat/lon bounding box
+china_flight_points <- china_flight_points %>%
+  filter(
+    st_coordinates(.)[, 2] >= 15 & st_coordinates(.)[, 2] <= 55,   # latitude
+    st_coordinates(.)[, 1] >= 70 & st_coordinates(.)[, 1] <= 140   # longitude
+  )
+
+# Step 4: Project to Web Mercator (or another CRS like EPSG:4490 if preferred)
+china_flight_points_proj <- st_transform(china_flight_points, crs = 3857)
+
+# Step 5: Extract coordinates for density estimation
+flight_coords <- as.data.frame(st_coordinates(china_flight_points_proj))
+names(flight_coords) <- c("X", "Y")
+
+# Step 6: Create the KDE plot
+ggplot() +
+  geom_point(data = flight_coords, aes(x = X, y = Y), color = "blue", alpha = 0.1, size = 0.4) +
+  stat_density_2d(
+    data = flight_coords,
+    aes(x = X, y = Y, fill = ..level.., alpha = ..level..),
+    geom = "polygon",
+    contour = TRUE
+  ) +
+  scale_fill_viridis(option = "C") +
+  scale_alpha(range = c(0.1, 0.5), guide = "none") +
+  labs(
+    title = "Flight Density Hotspots in China",
+    x = "Easting",
+    y = "Northing",
+    fill = "Density"
+  ) +
+  theme_minimal()
+
+# Transform your city shapefile to the same CRS (EPSG:3857)
+china_cities_proj <- st_transform(jan_des_2019city, crs = 3857)
+
+# Plot with map overlay
+ggplot() +
+  # Add city boundaries first (gray outlines)
+  geom_sf(data = china_cities_proj, fill = NA, color = "gray60", size = 0.3) +
+
+  # Add KDE contours
+  stat_density_2d(
+    data = flight_coords,
+    aes(x = X, y = Y, fill = ..level.., alpha = ..level..),
+    geom = "polygon",
+    contour = TRUE
+  ) +
+  scale_fill_viridis(option = "C") +
+  scale_alpha(range = c(0.1, 0.5), guide = "none") +
+
+  labs(
+    title = "Flight Density Hotspots Overlaid on Chinese City Boundaries",
+    x = "Easting (meters)",
+    y = "Northing (meters)",
+    fill = "Flight Density"
+  ) +
+  theme_minimal()
+
+```
+
+```         
+// Load the simplified country boundaries dataset
+var countries = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017');
+var china = countries.filter(ee.Filter.eq('country_na', 'China'));
+
+// Load and filter the NO2 ImageCollection
+var collection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_NO2')
+  .select('tropospheric_NO2_column_number_density')
+  .filterDate('2019-01-01', '2019-12-31')
+  .filterBounds(china);
+
+// Calculate the mean and clip to China
+var meanNO2 = collection.mean().clip(china);
+
+// Define export parameters
+Export.image.toDrive({
+  image: meanNO2,
+  description: 'Mean_NO2_China_2019_2020',
+  folder: 'FRE490', // make sure this folder exists in your Google Drive
+  fileNamePrefix: 'Mean_NO2_China_2019_2020',
+  region: china.geometry(),
+  scale: 1000, // resolution in meters; adjust if needed
+  crs: 'EPSG:4326',
+  maxPixels: 1e13
+});
+```
+
+```         
+// Load ERA5 Monthly Wind Data
+var wind = ee.ImageCollection('ECMWF/ERA5/MONTHLY')
+  .select(['u_component_of_wind_10m', 'v_component_of_wind_10m']);
+
+// Load China's Level-2 Administrative Boundaries
+var china_regions = ee.FeatureCollection("FAO/GAUL/2015/level2")
+  .filter(ee.Filter.eq('ADM0_NAME', 'China'));
+
+// Define phase time periods
+var phases = [
+  {label: 'Phase0', start: '2019-01-01', end: '2019-12-31'},
+  {label: 'Phase1', start: '2020-01-01', end: '2020-02-29'},
+  {label: 'Phase2', start: '2020-03-01', end: '2020-05-31'},
+  {label: 'Phase3', start: '2020-06-01', end: '2020-12-31'}
+];
+
+// Loop through each phase and export zonal stats
+phases.forEach(function(p) {
+  var phase_img = wind
+    .filterDate(p.start, p.end)
+    .mean()
+    .clip(china_regions);
+
+  // Compute mean u10 per region
+  var uStats = phase_img.select('u_component_of_wind_10m')
+    .reduceRegions({
+      collection: china_regions,
+      reducer: ee.Reducer.mean().setOutputs(['mean_u10']),
+      scale: 10000
+    });
+
+  // Compute mean v10 per region and merge with uStats
+  var uvStats = phase_img.select('v_component_of_wind_10m')
+    .reduceRegions({
+      collection: uStats,
+      reducer: ee.Reducer.mean().setOutputs(['mean_v10']),
+      scale: 10000
+    }).map(function(f) {
+      return f.set('phase', p.label);
+    });
+
+  // Export table to Google Drive
+  Export.table.toDrive({
+    collection: uvStats,
+    description: 'China_Wind_Phase_' + p.label,
+    folder: 'FRE 490',
+    fileNamePrefix: 'China_Wind_Phase_' + p.label,
+    fileFormat: 'CSV'
+  });
+});
+```
+
+### Resources
+
+1.  <https://code.earthengine.google.com/?scriptPath=Examples%3ADatasets%2FCOPERNICUS%2FCOPERNICUS_S5P_NRTI_L3_NO2>
+2.  <https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S5P_OFFL_L3_NO2>
